@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scanner
+      POSTGRES_PASSWORD: scanner
+      POSTGRES_DB: stock_scanner
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scanner"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Note: postgresql+psycopg:// (not plain postgresql://) --
+      # this project uses psycopg v3, and SQLAlchemy needs the
+      # driver named explicitly.
+      DATABASE_URL: postgresql+psycopg://scanner:scanner@db:5432/stock_scanner
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
+      DATA_DIRECTORY: /app/data/candles
+    volumes:
+      - ./data/candles:/app/data/candles
+    ports:
+      - "8000:8000"
+
+volumes:
+  db_data:
