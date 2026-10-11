@@ -16,6 +16,7 @@ COPY . .
 
 # Non-root user
 RUN useradd --create-home appuser
+RUN mkdir -p /data/candles && chown -R appuser:appuser /data
 USER appuser
 
 EXPOSE 8000
