@@ -1,3 +1,4 @@
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -47,6 +48,39 @@ def _resolve_symbol(df: pd.DataFrame) -> str:
         return full_symbol.split(":", 1)[1]
 
     return full_symbol
+
+
+# Every file we've seen is internally consistent (always one format
+# throughout), but not every file uses the SAME format as every
+# other -- most are ISO ("2025-01-06"), at least one is
+# day-first ("06-01-2025"). Detected per-file from its first value
+# rather than assumed, and used only to sort correctly; the
+# datetime column itself is written back out unparsed, in whatever
+# format it arrived in, so this never changes a file's own format.
+_DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y")
+
+
+def _parsed_datetime_for_sorting(column: pd.Series) -> pd.Series:
+
+    sample = next(
+        (value for value in column if pd.notna(value) and str(value).strip()),
+        None,
+    )
+
+    for fmt in _DATE_FORMATS:
+        if sample is not None:
+            try:
+                datetime.strptime(str(sample).strip(), fmt)
+            except ValueError:
+                continue
+        try:
+            return pd.to_datetime(column, format=fmt)
+        except (ValueError, TypeError):
+            continue
+
+    # Unrecognised format -- fall back to pandas' best-effort
+    # inference rather than failing the whole upload outright.
+    return pd.to_datetime(column, errors="coerce")
 
 
 @router.post("/upload")
@@ -147,13 +181,25 @@ async def upload_candles(
 
             combined_df = uploaded_df
 
+        combined_df = combined_df.drop_duplicates(
+            subset=["datetime"],
+            keep="last",
+        )
+
+        # Sort by the ACTUAL date, not the datetime column's raw
+        # text -- a plain string sort silently breaks chronological
+        # order for any file not in ISO (YYYY-MM-DD) format, e.g.
+        # day-first dates like "06-01-2025" sort incorrectly as
+        # text. Getting this wrong corrupts every indicator computed
+        # downstream for that symbol, since they all depend on row
+        # order being truly chronological.
         combined_df = (
             combined_df
-            .drop_duplicates(
-                subset=["datetime"],
-                keep="last",
+            .assign(
+                _sort_key=_parsed_datetime_for_sorting(combined_df["datetime"]),
             )
-            .sort_values("datetime")
+            .sort_values("_sort_key")
+            .drop(columns="_sort_key")
         )
 
         combined_df.to_csv(destination, index=False)
