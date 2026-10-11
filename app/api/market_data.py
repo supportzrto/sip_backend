@@ -129,6 +129,7 @@ async def upload_candles(
                     "error": f"Could not parse CSV: {exc}",
                 }
             )
+            
             continue
 
         if uploaded_df.empty:
