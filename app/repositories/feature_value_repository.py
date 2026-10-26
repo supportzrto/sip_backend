@@ -2,7 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 
 from app.models.feature.value import FeatureValue
 
@@ -115,6 +115,10 @@ class FeatureValueRepository:
                     decimal_value = EXCLUDED.decimal_value,
                     integer_value = EXCLUDED.integer_value,
                     boolean_value = EXCLUDED.boolean_value
+                WHERE
+                    feature_values.decimal_value IS DISTINCT FROM EXCLUDED.decimal_value
+                    OR feature_values.integer_value IS DISTINCT FROM EXCLUDED.integer_value
+                    OR feature_values.boolean_value IS DISTINCT FROM EXCLUDED.boolean_value
             """
 
             params: list = []
@@ -162,6 +166,19 @@ class FeatureValueRepository:
                 "integer_value": statement.excluded.integer_value,
                 "boolean_value": statement.excluded.boolean_value,
             },
+            # Same "don't rewrite an unchanged row" guard as the
+            # Postgres path, kept in step so the tests exercise it.
+            where=or_(
+                FeatureValue.decimal_value.is_distinct_from(
+                    statement.excluded.decimal_value,
+                ),
+                FeatureValue.integer_value.is_distinct_from(
+                    statement.excluded.integer_value,
+                ),
+                FeatureValue.boolean_value.is_distinct_from(
+                    statement.excluded.boolean_value,
+                ),
+            ),
         )
 
         rows = [

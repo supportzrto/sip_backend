@@ -22,6 +22,19 @@ from app.services.snapshot_updater import SnapshotUpdater
 # full multi-year history for an established instrument.
 INCREMENTAL_LOOKBACK_DAYS = 500
 
+# The 500-day window above exists only to SEED the indicators
+# correctly. The feature rows it produces for dates the database
+# already holds are identical to what's stored, so on a repeat run
+# only the last few days before the previous high-water mark are
+# written again (to absorb a late correction to the newest days);
+# everything older is left alone. Without this, every daily run
+# rewrote ~500 days x ~23 features for every instrument to add one
+# day's worth of new rows -- over 100x the writes needed, and in
+# Postgres every rewrite leaves a dead row version and dead index
+# entries behind, which is how a 50 GB volume filled up.
+# A force_full_resync still rewrites everything.
+INCREMENTAL_REWRITE_DAYS = 7
+
 
 class HistoricalFeatureProcessor:
     """
@@ -203,6 +216,14 @@ class HistoricalFeatureProcessor:
             instrument_id=instrument_id,
             candles=candles,
         )
+
+        if already_processed_through is not None:
+            rewrite_from = already_processed_through - timedelta(
+                days=INCREMENTAL_REWRITE_DAYS,
+            )
+            feature_rows = [
+                row for row in feature_rows if row.trade_date >= rewrite_from
+            ]
 
         self.snapshot_updater.update(
             feature_rows,
